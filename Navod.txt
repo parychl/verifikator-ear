@@ -1,0 +1,122 @@
+VERIFIKÁTOR EAR — NÁVOD K INSTALACI A POUŽITÍ
+=============================================
+
+Aplikace pro kontrolu elektronických autorizačních razítek (EAR) v PDF
+dokumentaci před podáním do Portálu stavebníka. Kontroluje se podle
+Metodiky k Verifikátoru podpisů (MMR): kvalifikovaný podpis dle eIDAS,
+autorizační razítko (§ 13 odst. 3 písm. b) zák. č. 360/1992 Sb.),
+kvalifikované časové razítko, uzamčení dokumentu a formát PDF/A-3
+(vyhláška č. 190/2024 Sb.).
+
+
+DŮLEŽITÉ UPOZORNĚNÍ
+-------------------
+Výsledky jsou podpůrná informace. Rozhodující je vždy výsledek
+verifikátoru v ISSŘ / Portálu stavebníka. Aplikace nikam neodesílá
+žádná data z kontrolovaných dokumentů a neukládá o nich žádné záznamy.
+
+Poznámka: odvolání (revokace) certifikátu se ověřuje jen tehdy, když
+jsou revokační servery certifikační autority dostupné; při výpadku
+sítě se podpis kvůli tomu nezneplatní. Rozhodující ověření provádí
+vždy ISSŘ.
+
+INSTALACE
+---------
+1. Rozbalte celý obsah tohoto ZIP souboru do libovolné složky,
+   například C:\Programy\Verifikator EAR
+   (klikněte pravým tlačítkem na ZIP -> "Extrahovat vše...").
+
+2. Ve složce "Verifikator EAR" spusťte soubor "Verifikator EAR.exe".
+
+3. POZOR: Při úplně prvním spuštění může Windows zobrazit modré okno
+   "Systém Windows ochránil váš počítač" (filtr SmartScreen — aplikace
+   není komerčně podepsaná). V tom případě klikněte na
+   "Další informace" a potom na "Přesto spustit".
+   Toto se objeví jen jednou.
+
+4. Aplikace se při prvním spuštění sama zeptá, zda má přidat zástupce
+   na plochu a do nabídky Start. Potvrďte "Yes" — potom ji spustíte
+   jako každý jiný program (a můžete si ji připnout na hlavní panel).
+
+Nic dalšího není potřeba instalovat — Python ani Java nejsou nutné.
+
+
+PRVNÍ SPUŠTĚNÍ A INTERNET
+-------------------------
+Při první kontrole si aplikace automaticky stáhne evropský/český
+seznam důvěryhodných autorit (trusted list).
+
+Dále se aplikace ZEPTÁ, zda smí stáhnout validátor formátu PDF/A
+(veraPDF, cca 10 MB; pokud v počítači není Java, přibalí si i její
+přenosnou verzi, cca 45 MB). Stažené soubory se ověřují proti
+očekávanému kontrolnímu otisku (SHA-256).
+
+DŮLEŽITÉ: Pokud stažení odmítnete, program NEBUDE ověřovat skutečný
+formát PDF (PDF/A) — zkontroluje se jen to, co dokument o svém formátu
+sám deklaruje v metadatech. Všechny ostatní kontroly (podpisy, razítka,
+uzamčení) fungují beze změny. Při příštím spuštění se aplikace
+zeptá znovu.
+
+K tomu je jednorázově potřeba připojení k internetu. Průběh je vidět
+ve stavovém řádku dole. Poté aplikace funguje i bez internetu
+(seznam autorit se obnovuje jednou za 7 dní, když je připojení
+k dispozici; bez připojení se použije starší uložená kopie).
+
+
+POUŽITÍ
+-------
+1. Přetáhněte PDF soubory nebo celou složku myší do okna aplikace
+   (nebo je vyberte tlačítky nahoře).
+2. U každého souboru se zobrazí výsledek:
+     - zelené   "Platný"                    = vše v pořádku
+     - červené  "Neplatný"                  = chyba podpisu/razítka
+     - oranžové "Technicky nevyhovující"    = dokument je uzamčen
+     - oranžové "Zastaralý standard podpisu" = podpis platný, ale ve
+       starším formátu Adobe PKCS#7 (ISSŘ ho nemusí uznat)
+   a samostatně stav formátu PDF/A.
+3. Průběh kontroly ukazuje lišta s počítadlem souborů (X/Y);
+   tlačítkem "Zastavit" lze kontrolu kdykoli přerušit — hotové
+   výsledky zůstanou.
+4. Kliknutím na řádek se vpravo zobrazí detail: kdo podepsal, číslo
+   autorizace, Komora, časové razítko a u chyb i doporučení k nápravě.
+   Sekce detailu lze sbalit kliknutím na nadpis; značka u nadpisu
+   ukazuje souhrnný stav dané části (zelená = v pořádku).
+5. Tlačítkem "Exportovat..." uložíte výsledky do Excelu (XLSX), CSV
+   nebo textového reportu — vše / jen platné / jen neplatné. Textový
+   report je vhodný k odeslání zpracovateli dokumentace k opravě.
+6. Přepínač vpravo nahoře (slunce/měsíc) přepíná tmavý a světlý vzhled.
+
+CO TO UMÍ
+-------------------------
+- Funguje i pro soubory s velmi dlouhou cestou (přes 260 znaků),
+  což je u projektové dokumentace s hlubokými složkami běžné.
+- Nový oranžový výsledek "Zastaralý standard podpisu": podpis je
+  platný, ale byl vytvořen starším formátem Adobe PKCS#7 místo
+  standardu PAdES, který vyžaduje metodika MMR. Není to chyba
+  podpisu, ale verifikátor v ISSŘ může takový dokument odmítnout.
+  V detailu je doporučení, jak nastavit podepisovací nástroj.
+- Podpisy, jejichž certifikát mezitím vypršel, se nově ověřují
+  k okamžiku časového razítka (stejně jako to dělá ISSŘ) — dřív
+  platně podepsané dokumenty tedy nejsou chybně označovány
+  za neplatné.
+- U dokumentů s více razítky se každé razítko vyhodnocuje zvlášť
+  a v detailu je u každého podpisu vidět jeho vlastní seznam chyb.
+  Dokument je Platný, jakmile všemi kontrolami projde alespoň
+  jedno razítko.
+- Rychlejší kontrola velkých dávek (ověřovací dotazy se v rámci
+  dávky neopakují) a srozumitelnější chybové hlášky s technickým
+  důvodem, když se certifikát nepodaří ověřit online.
+- Průběh kontroly ukazuje počítadlo souborů (X/Y) a kontrolu lze
+  kdykoli zastavit tlačítkem "Zastavit".
+- Detail souboru má sbalitelné sekce (kliknutím na nadpis), barevné
+  značky u všech kontrol a souhrnnou značku u každého nadpisu.
+  Při kontrole jediného souboru se detail zobrazí automaticky.
+- Stažení PDF/A validátoru (veraPDF) proběhne až po odsouhlasení
+  a stažené soubory se ověřují proti kontrolnímu otisku (SHA-256).
+
+ODINSTALACE
+-----------
+1. Smažte složku, kam jste aplikaci rozbalili.
+2. Smažte zástupce z plochy a z nabídky Start.
+3. Případně smažte i datovou složku C:\Users\<jméno>\.ear_verifikator
+   (obsahuje jen stažený trusted list, validátor PDF/A a nastavení).

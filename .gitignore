@@ -1,0 +1,9 @@
+.venv/
+build/
+dist/
+__pycache__/
+.pytest_cache/
+.tl_cache/
+*.spec
+*.lnk
+Verifikator_EAR.zip

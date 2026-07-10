@@ -1,0 +1,8 @@
+pyhanko[etsi]>=0.35
+pyhanko-certvalidator>=0.31
+aiohttp>=3.9
+PySide6>=6.6
+openpyxl>=3.1
+requests>=2.31
+cryptography>=42
+pytest>=8
