@@ -5,6 +5,11 @@ v PDF dokumentaci **před podáním** do Portálu stavebníka. Vyhodnocuje soubo
 Metodiky k Verifikátoru podpisů (MMR, 20. 11. 2025) — stejná terminologie výsledků
 i chyb, jakou uvidí úředník v ISSŘ.
 
+## Upozornění
+**Nejedná se o oficiální aplikaci. Je to pouze nástroj pro projektanty, aby si ušetřili práci s kontrolou před podáním na úřad přes Portál stavebníka.
+Za případné chyby a rozdíly s oficiálním reportem ISSŘ na sebe neberu žádnou zodpovědnost.**
+
+
 ## Stažení hotové aplikace
 
 Hotovou aplikaci pro Windows (bez nutnosti instalovat Python či Javu) stáhnete
