@@ -47,38 +47,9 @@ kontroly fungují beze změny. Data aplikace (trusted list, PDF/A validátor,
 nastavení) se ukládají do `%USERPROFILE%\.ear_verifikator`.
 Odinstalace = smazat složku aplikace, zástupce a `.ear_verifikator`.
 
-### Sestavení balíčku (pro vývojáře)
-
-Spusť `build_app.bat` (PyInstaller; `--collect-all signxml` je nutné —
-signxml načítá XSD schémata dynamicky a bez něj selže parsování trusted
-listu). Výsledek je ve `dist\Verifikator EAR\` — tuto složku zabal do ZIPu.
-Diagnostika sestavené aplikace bez GUI:
-`"Verifikator EAR.exe" --overit soubor.pdf --vystup report.txt`
-
-## Instalace (vývojové prostředí)
-
-Z kořenové složky projektu (obsahuje balíček `ear_verifikator` a `launcher.py`):
-
-```
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-```
-
-Plnou validaci PDF/A zajišťuje [veraPDF](https://verapdf.org/) — **není potřeba
-nic instalovat**: při prvním použití se aplikace zeptá a po odsouhlasení si ho
-stáhne (~10 MB z Maven Central) do `~/.ear_verifikator/verapdf`; pokud v systému
-není Java, přibalí si i přenosné JRE Temurin (~45 MB, jednorázově). Stahované
-soubory jsou připnuté na konkrétní verzi a ověřují se proti otisku SHA-256.
-Průběh stahování je vidět ve stavovém řádku. Bez validátoru (odmítnuto či bez
-připojení) se kontroluje pouze deklarovaná úroveň PDF/A v metadatech.
-
 ## Spuštění
 
 Z kořenové složky projektu:
-
-```
-.venv\Scripts\python -m ear_verifikator.gui.app
-```
 
 PDF soubory nebo celé složky lze přetáhnout do okna myší, případně vybrat tlačítky.
 Kliknutím na řádek se zobrazí detail: jednotlivé podpisy, údaje EAR (jméno, číslo
@@ -100,12 +71,6 @@ Při prvním spuštění se stáhne evropský seznam důvěryhodných seznamů (
 ověří se jeho podpis a z něj český Trusted List (kvalifikované CA a TSA).
 Vše se ukládá do cache (`~/.ear_verifikator/tl_cache`, platnost 7 dní).
 Bez připojení se použije i prošlá cache — s upozorněním ve stavovém řádku.
-
-## Testy
-
-```
-.venv\Scripts\python -m pytest ear_verifikator\tests
-```
 
 ## Omezení
 
