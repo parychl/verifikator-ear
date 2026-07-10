@@ -8,7 +8,8 @@ i chyb, jakou uvidí úředník v ISSŘ.
 ## Upozornění
 **Nejedná se o oficiální aplikaci. Je to pouze nástroj pro projektanty, aby si ušetřili práci s kontrolou před podáním na úřad přes Portál stavebníka.
 Za případné chyby a rozdíly s oficiálním reportem ISSŘ na sebe neberu žádnou zodpovědnost.**
-
+**Nejsem programátor, jsem jenom projektant, který si chtěl ulehčit život, proto vznikla tahle aplikace.
+Je to kompletně napsané přes Claude code, pokud budete mít nějaké poznatky ke kódu, dejte vědět, udělal jsem to proto, aby pomohlo dalším lidem**
 
 ## Stažení hotové aplikace
 
