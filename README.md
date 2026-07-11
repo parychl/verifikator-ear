@@ -29,7 +29,7 @@ Postup instalace je v přiloženém `Navod_instalace.txt`.
 | Uzamčení dokumentu (DocMDP „žádné změny“, FieldMDP, šifrování) | metodika kap. 4.2 |
 | Formát PDF/A-3: deklarace v XMP + skutečná shoda (veraPDF) | vyhláška č. 190/2024 Sb. |
 
-Výsledek na soubor: **Platný** / **Neplatný** / **Technicky nevyhovující** (uzamčen).
+Výsledek na soubor: **Platný** / **Neplatný** / **Technicky nevyhovující** (uzamčen) / **Zastaralý standard podpisu** (platný podpis ve starším formátu Adobe PKCS#7, který verifikátor v ISSŘ nemusí uznat).
 Formát PDF/A se dle metodiky do výsledku nezapočítává a zobrazuje se zvlášť.
 
 ## Pro uživatele (hotová aplikace)
