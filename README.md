@@ -55,6 +55,13 @@ PDF soubory nebo celé složky lze přetáhnout do okna myší, případně vybr
 Kliknutím na řádek se zobrazí detail: jednotlivé podpisy, údaje EAR (jméno, číslo
 autorizace, obor, Komora), časová razítka a doporučení k nápravě převzatá z metodiky.
 
+Výsledky lze filtrovat (nabídka **Zobrazit**, např. „Jen s problémy“) a řadit
+kliknutím na záhlaví sloupce; souhrn počtů podle stavu je ve stavovém řádku.
+Pravé tlačítko na řádku nabídne *Otevřít PDF*, *Otevřít složku souboru*,
+*Zkontrolovat znovu* (po přepodepsání) a *Exportovat vybrané*. Aplikace při
+startu tiše zkontroluje GitHub Releases a na novější verzi upozorní odkazem
+ve stavovém řádku (nic o vás ani o souborech neodesílá).
+
 ## Export výsledků
 
 Tlačítko **Exportovat…** nabízí rozsah *všechny výsledky* / *jen platné* /

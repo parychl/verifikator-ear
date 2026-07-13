@@ -81,10 +81,23 @@ POUŽITÍ
    autorizace, Komora, časové razítko a u chyb i doporučení k nápravě.
    Sekce detailu lze sbalit kliknutím na nadpis; značka u nadpisu
    ukazuje souhrnný stav dané části (zelená = v pořádku).
-5. Tlačítkem "Exportovat..." uložíte výsledky do Excelu (XLSX), CSV
-   nebo textového reportu — vše / jen platné / jen neplatné. Textový
-   report je vhodný k odeslání zpracovateli dokumentace k opravě.
-6. Přepínač vpravo nahoře (slunce/měsíc) přepíná tmavý a světlý vzhled.
+5. Rozbalovací nabídka "Zobrazit" filtruje tabulku (např. "Jen
+   s problémy" schová všechny platné soubory) a kliknutím na záhlaví
+   sloupce lze výsledky seřadit. Souhrn počtů je po dokončení
+   ve stavovém řádku dole.
+6. Pravé tlačítko na řádku otevře nabídku: Otevřít PDF, Otevřít
+   složku souboru, Zkontrolovat znovu (např. po přepodepsání) a
+   Exportovat vybrané. Více souborů vyberete tažením nebo s Ctrl/Shift.
+7. Tlačítkem "Exportovat..." uložíte výsledky do Excelu (XLSX), CSV
+   nebo textového reportu — vše / jen platné / jen neplatné / jen
+   vybrané. Textový report je vhodný k odeslání zpracovateli
+   dokumentace k opravě.
+8. Přepínač vpravo nahoře (slunce/měsíc) přepíná tmavý a světlý vzhled;
+   tlačítko "?" zobrazí informace o aplikaci a verzi.
+
+Aplikace se při spuštění tiše podívá, zda na GitHubu není novější
+verze — pokud ano, objeví se vpravo dole odkaz ke stažení. Kontrola
+nikam neposílá žádné údaje o vás ani o kontrolovaných souborech.
 
 CO TO UMÍ
 -------------------------
@@ -113,6 +126,10 @@ CO TO UMÍ
   Při kontrole jediného souboru se detail zobrazí automaticky.
 - Stažení PDF/A validátoru (veraPDF) proběhne až po odsouhlasení
   a stažené soubory se ověřují proti kontrolnímu otisku (SHA-256).
+- Filtrování a řazení výsledků, souhrn počtů podle stavu.
+- Kontextové menu na souboru: otevřít PDF, otevřít složku,
+  zkontrolovat znovu, exportovat vybrané.
+- Upozornění na novou verzi aplikace (z GitHub Releases).
 
 ODINSTALACE
 -----------

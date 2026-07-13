@@ -112,6 +112,22 @@ QPushButton#rezim {{
     padding: 7px 10px;
     font-size: 12pt;
 }}
+QComboBox {{
+    background: {t['vstup']};
+    border: 1px solid {t['okraj']};
+    border-radius: 6px;
+    padding: 6px 10px;
+    min-width: 120px;
+}}
+QComboBox:hover {{
+    border-color: {t['okraj_hover']};
+}}
+QComboBox QAbstractItemView {{
+    background: {t['vstup']};
+    border: 1px solid {t['okraj']};
+    selection-background-color: {t['akcent']};
+    selection-color: white;
+}}
 QTableWidget {{
     background: {t['panel']};
     alternate-background-color: {t['alt_radek']};

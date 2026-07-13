@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import html
+import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QBrush, QColor, QIcon, QPainter
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QIcon, QPainter
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -26,12 +29,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ear_verifikator import __version__
 from ear_verifikator.core import cesty, export, verapdf_setup
 from ear_verifikator.core.model import Vysledek, VysledekSouboru
 from ear_verifikator.core.signature import sestav_validacni_zdroje
 from ear_verifikator.core.trusted_list import nacti_trusted_list
 from ear_verifikator.core.verifier import Verifikator
-from ear_verifikator.gui import style
+from ear_verifikator.gui import aktualizace, style
 
 CACHE_DIR = Path.home() / ".ear_verifikator" / "tl_cache"
 IKONA = Path(__file__).resolve().parent.parent / "icon.ico"
@@ -137,6 +141,21 @@ class KontrolniWorker(QObject):
                 vysledek = verifikator.zkontroluj(soubor)
                 self.soubor_hotov.emit(i, vysledek)
                 self.prubeh.emit(i + 1, celkem)
+        finally:
+            self.hotovo.emit()
+
+
+class AktualizacniWorker(QObject):
+    """Tichá kontrola novější verze na GitHubu (na pozadí při startu)."""
+
+    nalezena = Signal(str)
+    hotovo = Signal()
+
+    def spust(self):
+        try:
+            verze = aktualizace.zjisti_novejsi_verzi(__version__)
+            if verze:
+                self.nalezena.emit(verze)
         finally:
             self.hotovo.emit()
 
@@ -326,19 +345,40 @@ def _detail_html(v: VysledekSouboru, sbalene: set[str] | None = None) -> str:
     return "".join(radky)
 
 
+# volby filtru tabulky: (popisek, None=vše | "problemy" | Vysledek)
+_FILTRY = [
+    ("Vše", None),
+    ("Jen s problémy", "problemy"),
+    ("Platné", Vysledek.PLATNY),
+    ("Neplatné", Vysledek.NEPLATNY),
+    ("Zastaralý standard podpisu", Vysledek.ZASTARALY_STANDARD),
+    ("Technicky nevyhovující", Vysledek.TECHNICKY_NEVYHOVUJICI),
+    ("Chyba zpracování", Vysledek.CHYBA_ZPRACOVANI),
+]
+
+
 class HlavniOkno(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Verifikátor EAR — kontrola autorizačních razítek v PDF")
+        self.setWindowTitle(
+            f"Verifikátor EAR {__version__} — kontrola autorizačních razítek v PDF"
+        )
         if IKONA.exists():
             self.setWindowIcon(QIcon(str(IKONA)))
         self.resize(1150, 650)
         self.setAcceptDrops(True)
 
-        self._vysledky: list[VysledekSouboru] = []
+        # _vysledky, _soubory a _radky jsou paralelní seznamy indexované
+        # "indexem výsledku"; řádek tabulky se hledá přes item v _radky,
+        # takže řazení ani filtrování tabulky mapování nerozbije
+        self._vysledky: list[VysledekSouboru | None] = []
+        self._soubory: list[Path] = []
+        self._radky: list[QTableWidgetItem] = []
+        self._cilove_indexy: list[int] = []
         self._thread: QThread | None = None
         self._worker: KontrolniWorker | None = None
         self._verapdf_odmitnut = False  # uživatel v tomto sezení odmítl stažení
+        self._nova_verze: str | None = None
 
         styl = self.style()
         tlacitka = QHBoxLayout()
@@ -362,7 +402,17 @@ class HlavniOkno(QMainWindow):
         menu_export.addAction(
             "Jen neplatné a s výhradami", lambda: self._exportuj("neplatne")
         )
+        menu_export.addAction("Jen vybrané", self._exportuj_vybrane)
         self.btn_export.setMenu(menu_export)
+        self.cmb_filtr = QComboBox()
+        self.cmb_filtr.setToolTip("Filtrovat zobrazené výsledky")
+        for popisek, data in _FILTRY:
+            self.cmb_filtr.addItem(popisek, data)
+        self.cmb_filtr.currentIndexChanged.connect(self._aplikuj_filtr)
+        self.btn_info = QPushButton("?")
+        self.btn_info.setObjectName("rezim")
+        self.btn_info.setToolTip("O aplikaci")
+        self.btn_info.setFixedWidth(44)
         self.btn_rezim = QPushButton()
         self.btn_rezim.setObjectName("rezim")
         self.btn_rezim.setToolTip("Přepnout tmavý/světlý režim")
@@ -372,7 +422,10 @@ class HlavniOkno(QMainWindow):
         tlacitka.addWidget(self.btn_slozka)
         tlacitka.addWidget(self.btn_vycistit)
         tlacitka.addWidget(self.btn_export)
+        tlacitka.addWidget(QLabel("Zobrazit:"))
+        tlacitka.addWidget(self.cmb_filtr)
         tlacitka.addStretch()
+        tlacitka.addWidget(self.btn_info)
         tlacitka.addWidget(self.btn_rezim)
 
         self.tabulka = TabulkaSouboru(0, 4)
@@ -389,9 +442,11 @@ class HlavniOkno(QMainWindow):
         self.tabulka.setAlternatingRowColors(True)
         self.tabulka.setShowGrid(False)
         self.tabulka.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tabulka.setSelectionMode(QTableWidget.SingleSelection)
+        self.tabulka.setSelectionMode(QTableWidget.ExtendedSelection)
         self.tabulka.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabulka.itemSelectionChanged.connect(self._zobraz_detail)
+        self.tabulka.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tabulka.customContextMenuRequested.connect(self._menu_tabulky)
 
         self.detail = QTextBrowser()
         self.detail.setOpenExternalLinks(False)
@@ -399,7 +454,7 @@ class HlavniOkno(QMainWindow):
         self.detail.anchorClicked.connect(self._prepni_sekci)
         self.detail.setPlaceholderText("Vyberte soubor v tabulce pro zobrazení detailu…")
         self._sbalene: set[str] = set()   # sbalené sekce detailu
-        self._detail_radek: int | None = None
+        self._detail_index: int | None = None
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self.tabulka)
@@ -435,6 +490,24 @@ class HlavniOkno(QMainWindow):
         self.btn_vycistit.clicked.connect(self._vycisti)
         self.btn_zastavit.clicked.connect(self._zastav_kontrolu)
         self.btn_rezim.clicked.connect(self._prepni_rezim)
+        self.btn_info.clicked.connect(self._zobraz_o_aplikaci)
+
+        self._spust_kontrolu_aktualizaci()
+
+    # --- mapování výsledků na řádky tabulky ------------------------------
+    def _radek_indexu(self, idx: int) -> int:
+        """Aktuální řádek tabulky pro daný index výsledku (i po seřazení)."""
+        return self.tabulka.row(self._radky[idx])
+
+    def _index_radku(self, radek: int) -> int | None:
+        item = self.tabulka.item(radek, 0)
+        return None if item is None else item.data(Qt.UserRole)
+
+    def _vybrane_indexy(self) -> list[int]:
+        radky = sorted({i.row() for i in self.tabulka.selectedItems()})
+        return [
+            idx for radek in radky if (idx := self._index_radku(radek)) is not None
+        ]
 
     # --- vzhled ---------------------------------------------------------
     def _aktualizuj_ikonu_rezimu(self):
@@ -447,10 +520,13 @@ class HlavniOkno(QMainWindow):
         style.uloz_rezim(novy)
         self._aktualizuj_ikonu_rezimu()
         # překreslit barvy výsledků v tabulce i detail podle nového režimu
-        for radek, v in enumerate(self._vysledky):
+        razeni = self.tabulka.isSortingEnabled()
+        self.tabulka.setSortingEnabled(False)
+        for idx, v in enumerate(self._vysledky):
             if v is not None:
-                self._zapis_vysledek(radek, v)
-        self._zobraz_detail()
+                self._zapis_vysledek(idx, v)
+        self.tabulka.setSortingEnabled(razeni)
+        self._vykresli_detail()
 
     # --- výběr souborů -------------------------------------------------
     def _vyber_soubory(self):
@@ -494,8 +570,10 @@ class HlavniOkno(QMainWindow):
             return
         self.tabulka.setRowCount(0)
         self._vysledky.clear()
+        self._soubory.clear()
+        self._radky.clear()
         self.detail.clear()
-        self._detail_radek = None
+        self._detail_index = None
         self._sbalene.clear()
         self.btn_export.setEnabled(False)
 
@@ -504,13 +582,23 @@ class HlavniOkno(QMainWindow):
         vysledky = export.filtruj(
             [v for v in self._vysledky if v is not None], rozsah
         )
+        self._exportuj_seznam(vysledky, rozsah)
+
+    def _exportuj_vybrane(self):
+        vysledky = [
+            self._vysledky[idx]
+            for idx in self._vybrane_indexy()
+            if self._vysledky[idx] is not None
+        ]
+        self._exportuj_seznam(vysledky, "vybrane")
+
+    def _exportuj_seznam(self, vysledky: list[VysledekSouboru], nazev_rozsahu: str):
         if not vysledky:
             QMessageBox.information(
                 self, "Nic k exportu", "Zvolenému rozsahu neodpovídají žádné výsledky."
             )
             return
-        pripona_rozsahu = {"vse": "vse", "platne": "platne", "neplatne": "neplatne"}[rozsah]
-        vychozi = f"kontrola_EAR_{datetime.now():%Y-%m-%d}_{pripona_rozsahu}.xlsx"
+        vychozi = f"kontrola_EAR_{datetime.now():%Y-%m-%d}_{nazev_rozsahu}.xlsx"
         cesta, filtr = QFileDialog.getSaveFileName(
             self,
             "Uložit export",
@@ -531,6 +619,68 @@ class HlavniOkno(QMainWindow):
         self.statusBar().showMessage(
             f"Exportováno {len(vysledky)} záznamů do {soubor}", 10000
         )
+
+    # --- kontextové menu -------------------------------------------------
+    def _menu_tabulky(self, pozice):
+        indexy = self._vybrane_indexy()
+        if not indexy:
+            return
+        menu = QMenu(self)
+        a_pdf = menu.addAction("Otevřít PDF")
+        a_pdf.setEnabled(len(indexy) <= 5)  # neotvírat desítky oken najednou
+        a_slozka = menu.addAction("Otevřít složku souboru")
+        a_slozka.setEnabled(len(indexy) <= 5)
+        menu.addSeparator()
+        popisek = "Zkontrolovat znovu" + (f" ({len(indexy)})" if len(indexy) > 1 else "")
+        a_znovu = menu.addAction(popisek)
+        a_znovu.setEnabled(self._thread is None)
+        a_export = menu.addAction("Exportovat vybrané…")
+        a_export.setEnabled(any(self._vysledky[i] is not None for i in indexy))
+
+        akce = menu.exec(self.tabulka.viewport().mapToGlobal(pozice))
+        if akce is a_pdf:
+            for idx in indexy:
+                QDesktopServices.openUrl(
+                    QUrl.fromLocalFile(str(self._soubory[idx]))
+                )
+        elif akce is a_slozka:
+            for idx in indexy:
+                # explorer /select,"cesta" zvýrazní soubor ve složce
+                subprocess.Popen(["explorer", f"/select,{self._soubory[idx]}"])
+        elif akce is a_znovu:
+            self._zkontroluj(
+                [self._soubory[idx] for idx in indexy], cilove_indexy=indexy
+            )
+        elif akce is a_export:
+            self._exportuj_vybrane()
+
+    # --- filtr a souhrn --------------------------------------------------
+    def _aplikuj_filtr(self):
+        volba = self.cmb_filtr.currentData()
+        for radek in range(self.tabulka.rowCount()):
+            idx = self._index_radku(radek)
+            v = self._vysledky[idx] if idx is not None else None
+            if volba is None:
+                skryt = False
+            elif v is None:
+                skryt = True  # nezkontrolované řádky jen v pohledu „Vše“
+            elif volba == "problemy":
+                skryt = v.vysledek == Vysledek.PLATNY
+            else:
+                skryt = v.vysledek != volba
+            self.tabulka.setRowHidden(radek, skryt)
+
+    def _souhrn_text(self) -> str:
+        pocty = {stav: 0 for stav in Vysledek}
+        for v in self._vysledky:
+            if v is not None:
+                pocty[v.vysledek] += 1
+        casti = [
+            f"{SYMBOLY[stav]} {pocty[stav]}"
+            for stav in Vysledek
+            if pocty[stav]
+        ]
+        return "  ".join(casti)
 
     # --- kontrola ------------------------------------------------------
     def _zeptej_se_na_verapdf(self) -> bool:
@@ -561,23 +711,41 @@ class HlavniOkno(QMainWindow):
             return False
         return True
 
-    def _zkontroluj(self, soubory: list[Path]):
+    def _zkontroluj(self, soubory: list[Path], cilove_indexy: list[int] | None = None):
+        """Spustí kontrolu; cilove_indexy = přepsat existující řádky (re-check)."""
         if self._thread is not None:
             QMessageBox.warning(self, "Probíhá kontrola", "Počkejte na dokončení probíhající kontroly.")
             return
         stahnout_verapdf = self._zeptej_se_na_verapdf()
-        self._start_radek = self.tabulka.rowCount()
+        self.tabulka.setSortingEnabled(False)  # vkládání do seřazené tabulky přesouvá řádky
+
+        if cilove_indexy is None:
+            self._cilove_indexy = []
+            for soubor in soubory:
+                idx = len(self._vysledky)
+                radek = self.tabulka.rowCount()
+                self.tabulka.insertRow(radek)
+                nazev = QTableWidgetItem(soubor.name)
+                nazev.setToolTip(str(soubor))
+                nazev.setData(Qt.UserRole, idx)
+                self.tabulka.setItem(radek, 0, nazev)
+                self.tabulka.setItem(radek, 1, QTableWidgetItem("kontroluje se…"))
+                self.tabulka.setItem(radek, 2, QTableWidgetItem(""))
+                self.tabulka.setItem(radek, 3, QTableWidgetItem(""))
+                self._vysledky.append(None)
+                self._soubory.append(soubor)
+                self._radky.append(nazev)
+                self._cilove_indexy.append(idx)
+        else:
+            self._cilove_indexy = list(cilove_indexy)
+            for idx in cilove_indexy:
+                radek = self._radek_indexu(idx)
+                self._vysledky[idx] = None
+                self._radky[idx].setBackground(QBrush())
+                self.tabulka.setItem(radek, 1, QTableWidgetItem("kontroluje se…"))
+                self.tabulka.setItem(radek, 2, QTableWidgetItem(""))
+                self.tabulka.setItem(radek, 3, QTableWidgetItem(""))
         self._pocet_davky = len(soubory)
-        for soubor in soubory:
-            radek = self.tabulka.rowCount()
-            self.tabulka.insertRow(radek)
-            nazev = QTableWidgetItem(soubor.name)
-            nazev.setToolTip(str(soubor))
-            self.tabulka.setItem(radek, 0, nazev)
-            self.tabulka.setItem(radek, 1, QTableWidgetItem("kontroluje se…"))
-            self.tabulka.setItem(radek, 2, QTableWidgetItem(""))
-            self.tabulka.setItem(radek, 3, QTableWidgetItem(""))
-        self._vysledky.extend([None] * len(soubory))
 
         self.progress.setVisible(True)
         self.progress.setRange(0, len(soubory))
@@ -606,7 +774,7 @@ class HlavniOkno(QMainWindow):
         self.statusBar().showMessage(popis)
 
     def _na_soubor_hotov(self, i: int, v: VysledekSouboru):
-        self._zapis_vysledek(self._start_radek + i, v)
+        self._zapis_vysledek(self._cilove_indexy[i], v)
 
     def _na_prubeh(self, hotovo: int, celkem: int):
         self.progress.setValue(hotovo)
@@ -618,8 +786,9 @@ class HlavniOkno(QMainWindow):
             self.btn_zastavit.setEnabled(False)
             self.statusBar().showMessage("Zastavuji po dokončení aktuálního souboru…")
 
-    def _zapis_vysledek(self, radek: int, v: VysledekSouboru):
-        self._vysledky[radek] = v
+    def _zapis_vysledek(self, idx: int, v: VysledekSouboru):
+        self._vysledky[idx] = v
+        radek = self._radek_indexu(idx)
         barva = _barva(v.vysledek)
 
         item = QTableWidgetItem(f"{SYMBOLY[v.vysledek]} {v.vysledek.value}")
@@ -663,41 +832,52 @@ class HlavniOkno(QMainWindow):
             self._thread.wait()
             self._thread = None
         # po zastavení označit nezpracované řádky
-        for radek in range(min(self.tabulka.rowCount(), len(self._vysledky))):
-            if self._vysledky[radek] is None:
+        for idx in self._cilove_indexy:
+            if self._vysledky[idx] is None:
                 self.tabulka.setItem(
-                    radek, 1, QTableWidgetItem("nezkontrolováno (zastaveno)")
+                    self._radek_indexu(idx),
+                    1,
+                    QTableWidgetItem("nezkontrolováno (zastaveno)"),
                 )
+        self.tabulka.setSortingEnabled(True)
+        self._aplikuj_filtr()
         stav = "Zastaveno" if zastaveno else "Hotovo"
         if pocet:
             stav += f" ({pocet})"
+        souhrn = self._souhrn_text()
+        casti = [stav]
+        if souhrn:
+            casti.append(souhrn)
         zprava = getattr(self, "_tl_zprava", "")
-        self.statusBar().showMessage(f"{stav} | {zprava}" if zprava else stav)
+        if zprava:
+            casti.append(zprava)
+        self.statusBar().showMessage(" | ".join(casti))
         # u jediného souboru rovnou zobrazit detail v pravém panelu
-        if getattr(self, "_pocet_davky", 0) == 1:
-            self.tabulka.selectRow(self._start_radek)
+        if self._pocet_davky == 1 and self._cilove_indexy:
+            self.tabulka.selectRow(self._radek_indexu(self._cilove_indexy[0]))
+        self._vykresli_detail()  # obnovit detail po re-checku
 
     def _zobraz_detail(self):
-        radky = {i.row() for i in self.tabulka.selectedItems()}
-        if len(radky) != 1:
+        indexy = self._vybrane_indexy()
+        if len(indexy) != 1:
             return
-        radek = radky.pop()
-        if radek < len(self._vysledky) and self._vysledky[radek] is not None:
-            if self._detail_radek != radek:
+        idx = indexy[0]
+        if self._vysledky[idx] is not None:
+            if self._detail_index != idx:
                 self._sbalene.clear()  # nový soubor → vše rozbalené
-                self._detail_radek = radek
+                self._detail_index = idx
             self._vykresli_detail()
 
     def _vykresli_detail(self):
         if (
-            self._detail_radek is None
-            or self._detail_radek >= len(self._vysledky)
-            or self._vysledky[self._detail_radek] is None
+            self._detail_index is None
+            or self._detail_index >= len(self._vysledky)
+            or self._vysledky[self._detail_index] is None
         ):
             return
         posuv = self.detail.verticalScrollBar().value()
         self.detail.setHtml(
-            _detail_html(self._vysledky[self._detail_radek], self._sbalene)
+            _detail_html(self._vysledky[self._detail_index], self._sbalene)
         )
         self.detail.verticalScrollBar().setValue(posuv)
 
@@ -711,3 +891,47 @@ class HlavniOkno(QMainWindow):
         else:
             self._sbalene.add(klic)
         self._vykresli_detail()
+
+    # --- aktualizace a o aplikaci ----------------------------------------
+    def _spust_kontrolu_aktualizaci(self):
+        if os.environ.get("EAR_VERIFIKATOR_BEZ_AKTUALIZACI"):
+            return  # vypnuto (testy, offline prostředí)
+        self._akt_thread = QThread(self)
+        self._akt_worker = AktualizacniWorker()
+        self._akt_worker.moveToThread(self._akt_thread)
+        self._akt_thread.started.connect(self._akt_worker.spust)
+        self._akt_worker.nalezena.connect(self._na_novou_verzi)
+        self._akt_worker.hotovo.connect(self._akt_thread.quit)
+        self._akt_thread.start()
+
+    def _na_novou_verzi(self, verze: str):
+        self._nova_verze = verze
+        upozorneni = QLabel(
+            f"K dispozici je nová verze {verze} — "
+            f"<a href='{aktualizace.RELEASES_URL}'>stáhnout</a>"
+        )
+        upozorneni.setOpenExternalLinks(True)
+        self.statusBar().addPermanentWidget(upozorneni)
+
+    def _zobraz_o_aplikaci(self):
+        nova = ""
+        if self._nova_verze:
+            nova = (
+                f"<p><b>K dispozici je novější verze {self._nova_verze}</b> — "
+                f"<a href='{aktualizace.RELEASES_URL}'>stáhnout na GitHubu</a>.</p>"
+            )
+        QMessageBox.about(
+            self,
+            "O aplikaci",
+            f"<h3>Verifikátor EAR {__version__}</h3>"
+            "<p>Kontrola elektronických autorizačních razítek (EAR) v PDF "
+            "dokumentaci před podáním do Portálu stavebníka, podle Metodiky "
+            "k Verifikátoru podpisů (MMR).</p>"
+            f"{nova}"
+            "<p>Zdrojový kód a hlášení chyb: "
+            f"<a href='https://github.com/{aktualizace.REPOZITAR}'>"
+            f"github.com/{aktualizace.REPOZITAR}</a></p>"
+            "<p>© 2026 Patrik Rychlý, licence MIT.<br>"
+            "Nejedná se o oficiální aplikaci — rozhodující je vždy výsledek "
+            "verifikátoru v ISSŘ / Portálu stavebníka.</p>",
+        )
