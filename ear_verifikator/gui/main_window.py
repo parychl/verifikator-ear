@@ -629,7 +629,6 @@ class HlavniOkno(QMainWindow):
         a_pdf = menu.addAction("Otevřít PDF")
         a_pdf.setEnabled(len(indexy) <= 5)  # neotvírat desítky oken najednou
         a_slozka = menu.addAction("Otevřít složku souboru")
-        a_slozka.setEnabled(len(indexy) <= 5)
         menu.addSeparator()
         popisek = "Zkontrolovat znovu" + (f" ({len(indexy)})" if len(indexy) > 1 else "")
         a_znovu = menu.addAction(popisek)
@@ -644,9 +643,12 @@ class HlavniOkno(QMainWindow):
                     QUrl.fromLocalFile(str(self._soubory[idx]))
                 )
         elif akce is a_slozka:
-            for idx in indexy:
-                # explorer /select,"cesta" zvýrazní soubor ve složce
-                subprocess.Popen(["explorer", f"/select,{self._soubory[idx]}"])
+            # jediné okno Průzkumníka i při více vybraných souborech;
+            # celý příkaz jako řetězec — při předání seznamem by se
+            # "/select,cesta" obalil uvozovkami vcelku a Průzkumník by
+            # místo složky otevřel Dokumenty
+            soubor = self._soubory[indexy[0]]
+            subprocess.Popen(f'explorer /select,"{soubor}"')
         elif akce is a_znovu:
             self._zkontroluj(
                 [self._soubory[idx] for idx in indexy], cilove_indexy=indexy
