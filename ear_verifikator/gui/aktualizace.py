@@ -11,7 +11,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-REPOZITAR = "Kurniklas/verifikator-ear"
+REPOZITAR = "parychl/verifikator-ear"
 RELEASES_URL = f"https://github.com/{REPOZITAR}/releases/latest"
 _API_URL = f"https://api.github.com/repos/{REPOZITAR}/releases/latest"
 
