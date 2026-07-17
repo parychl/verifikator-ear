@@ -99,6 +99,11 @@ QPushButton:pressed {{
 QPushButton:disabled {{
     color: {t['tlumeny']};
 }}
+QPushButton:checked {{
+    background: {t['akcent']};
+    border-color: {t['akcent']};
+    color: white;
+}}
 QPushButton#primarni {{
     background: {t['akcent']};
     border-color: {t['akcent']};

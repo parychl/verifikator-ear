@@ -19,9 +19,14 @@ from .model import InfoPDFA
 
 log = logging.getLogger(__name__)
 
-_PART = re.compile(rb'pdfaid:part\s*=\s*"(\d+)"|<pdfaid:part>\s*(\d+)\s*</pdfaid:part>')
+# XML atributy smí používat uvozovky i apostrofy (některé podepisovací
+# nástroje zapisují pdfaid:part='3')
+_PART = re.compile(
+    rb'pdfaid:part\s*=\s*["\'](\d+)["\']|<pdfaid:part>\s*(\d+)\s*</pdfaid:part>'
+)
 _CONF = re.compile(
-    rb'pdfaid:conformance\s*=\s*"([A-Ua-u])"|<pdfaid:conformance>\s*([A-Ua-u])\s*</pdfaid:conformance>'
+    rb'pdfaid:conformance\s*=\s*["\']([A-Ua-u])["\']'
+    rb'|<pdfaid:conformance>\s*([A-Ua-u])\s*</pdfaid:conformance>'
 )
 
 POZADOVANA_CAST = 3  # PDF/A-3

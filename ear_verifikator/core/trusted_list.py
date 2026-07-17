@@ -2,9 +2,9 @@
 
 Používá vestavěnou podporu pyHanko (eutl_fetch/eutl_parse): stáhne LOTL,
 ověří jeho podpis proti certifikátům z Úředního věstníku EU a z něj
-načte národní trusted listy (výchozí: jen CZ). Výsledný TSPRegistry
-obsahuje kvalifikované CA (CA/QC) i TSA (TSA/QTST) a slouží jako zdroj
-důvěry pro validaci podpisů i posouzení kvalifikovanosti.
+načte národní trusted listy. Sestavují se dva registry: český (důvěra
+pro certifikáty podpisů — EAR) a celoevropský (důvěra pro časová
+razítka — kvalifikovaná TSA může být z kteréhokoli členského státu).
 
 Cache na disku; při výpadku sítě se použije i prošlá cache (s upozorněním).
 """
@@ -29,7 +29,9 @@ from pyhanko.sign.validation.qualified.tsp import TSPRegistry
 
 log = logging.getLogger(__name__)
 
-VYCHOZI_UZEMI = frozenset({"CZ"})
+VYCHOZI_UZEMI = frozenset({"CZ"})               # důvěra pro podpisy (EAR)
+# razítka: výchozí jen ČR a Slovensko (rychlý start); None = celá EU
+VYCHOZI_UZEMI_RAZITEK = frozenset({"CZ", "SK"})
 VYCHOZI_EXPIRACE = timedelta(days=7)
 
 
@@ -76,20 +78,27 @@ class _StaleTolerantTLCache(_Utf8TLCache):
 
 @dataclass
 class VysledekTL:
-    registry: TSPRegistry | None = None
+    """Dva zdroje důvěry: CZ pro certifikáty podpisů (EAR je česká
+    záležitost), celá EU pro časová razítka (kvalifikovaná TSA může být
+    z kteréhokoli členského státu — eIDAS je celoevropské)."""
+
+    registry_cz: TSPRegistry | None = None
+    registry_eu: TSPRegistry | None = None
     z_prosle_cache: bool = False
     chyby: list[str] = field(default_factory=list)
 
 
-async def _prefetchni_narodni_tl(lotl_xml: str, client, cache) -> None:
-    """Stáhne národní TL do cache s hlavičkou Accept: */*.
+async def _prefetchni_narodni_tl(
+    lotl_xml: str, client, cache, uzemi: frozenset[str] | None
+) -> None:
+    """Stáhne národní TL do cache s hlavičkou Accept: */* (None = všechny země).
 
     Např. tsl.gov.cz vrací 406 na Accept hlavičky, které posílá pyHanko;
     lotl_to_registry pak TL najde v cache a stahovat už nemusí.
     """
-    uzemi = {u.casefold() for u in VYCHOZI_UZEMI}
+    povolena = None if uzemi is None else {u.casefold() for u in uzemi}
     for ref in eutl_parse.parse_lotl_unsafe(lotl_xml).references:
-        if ref.territory.casefold() not in uzemi:
+        if povolena is not None and ref.territory.casefold() not in povolena:
             continue
         try:
             cache[ref.location_uri]
@@ -110,26 +119,52 @@ async def _prefetchni_narodni_tl(lotl_xml: str, client, cache) -> None:
             log.warning("Prefetch TL %s selhal: %s", ref.location_uri, e)
 
 
-async def _nacti(cache) -> TSPRegistry:
+async def _nacti(
+    cache, uzemi_razitek: frozenset[str] | None
+) -> tuple[TSPRegistry, TSPRegistry]:
+    """(registr CZ pro podpisy, registr pro razítka) z jednoho stažení LOTL."""
     async with aiohttp.ClientSession() as client:
         lotl_xml = await fetch_lotl(client, cache)
-        await _prefetchni_narodni_tl(lotl_xml, client, cache)
-        registry, errors = await lotl_to_registry(
+        prefetch_uzemi = (
+            None
+            if uzemi_razitek is None
+            else frozenset(VYCHOZI_UZEMI | uzemi_razitek)
+        )
+        await _prefetchni_narodni_tl(lotl_xml, client, cache, prefetch_uzemi)
+        registry_cz, errors_cz = await lotl_to_registry(
             lotl_xml, client, cache=cache, only_territories=set(VYCHOZI_UZEMI)
         )
-    for e in errors:
-        log.warning("Trusted list: %s", e)
-    if not any(True for _ in registry.known_certificate_authorities):
+        registry_eu, errors_eu = await lotl_to_registry(
+            lotl_xml,
+            client,
+            cache=cache,
+            only_territories=None if uzemi_razitek is None else set(uzemi_razitek),
+        )
+    for e in errors_cz:
+        log.warning("Trusted list (CZ): %s", e)
+    for e in errors_eu:
+        log.warning("Trusted list (razítka): %s", e)
+    if not any(True for _ in registry_cz.known_certificate_authorities):
         raise RuntimeError("Trusted list neobsahuje žádné certifikační autority")
-    return registry
+    return registry_cz, registry_eu
 
 
-def nacti_trusted_list(cache_dir: Path, expirace: timedelta = VYCHOZI_EXPIRACE) -> VysledekTL:
-    """Vrátí TSPRegistry pro CZ; při nedostupnosti sítě zkusí prošlou cache."""
+def nacti_trusted_list(
+    cache_dir: Path,
+    expirace: timedelta = VYCHOZI_EXPIRACE,
+    uzemi_razitek: frozenset[str] | None = VYCHOZI_UZEMI_RAZITEK,
+) -> VysledekTL:
+    """Vrátí registry (CZ + razítka); při nedostupnosti sítě zkusí prošlou cache.
+
+    uzemi_razitek: země, jejichž TSA se uznávají pro časová razítka;
+    None = všechny země EU (delší stahování a parsování).
+    """
     vysledek = VysledekTL()
     try:
         cache = _Utf8TLCache(cache_dir, expire_after=expirace)
-        vysledek.registry = asyncio.run(_nacti(cache))
+        vysledek.registry_cz, vysledek.registry_eu = asyncio.run(
+            _nacti(cache, uzemi_razitek)
+        )
         return vysledek
     except Exception as e:
         log.warning("Stažení trusted listu selhalo: %s", e)
@@ -137,7 +172,9 @@ def nacti_trusted_list(cache_dir: Path, expirace: timedelta = VYCHOZI_EXPIRACE) 
 
     try:
         stale_cache = _StaleTolerantTLCache(cache_dir, expire_after=expirace)
-        vysledek.registry = asyncio.run(_nacti(stale_cache))
+        vysledek.registry_cz, vysledek.registry_eu = asyncio.run(
+            _nacti(stale_cache, uzemi_razitek)
+        )
         vysledek.z_prosle_cache = True
         vysledek.chyby.append(
             "Použita starší uložená kopie trusted listu — výsledky nemusí "

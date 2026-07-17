@@ -42,6 +42,51 @@ def test_neznamy_subfilter_je_chyba():
     assert KodChyby.PODPIS_NESPRAVNY_ZPUSOB in {ch.kod for ch in chyby}
 
 
+def test_zahranicni_razitko_je_varovani():
+    p = _plny_podpis("/ETSI.CAdES.detached")
+    p.razitko.zeme = "IT"
+    p.razitko.tsa = "Ministero della Difesa - Time Stamp Unit eIDAS"
+    chyby, varovani = _chyby_podpisu(p, False)
+    assert chyby == []  # kvalifikované zahraniční razítko není chyba…
+    assert [v.kod for v in varovani] == [KodChyby.RAZITKO_JINE_ZEME]
+    assert "Itálie" in varovani[0].detail  # hláška nese zemi autority
+    assert varovani[0].nazev.endswith("(Itálie)")  # název země i v titulku
+
+
+def test_ceske_razitko_bez_varovani():
+    p = _plny_podpis("/ETSI.CAdES.detached")
+    p.razitko.zeme = "CZ"
+    chyby, varovani = _chyby_podpisu(p, False)
+    assert chyby == [] and varovani == []
+
+
+def _verdikt_pro_podpis(monkeypatch, prazdna_spec, blank_pdf, podpis):
+    from ear_verifikator.core import verifier
+    from ear_verifikator.core.model import InfoPDFA
+
+    monkeypatch.setattr(verifier, "zvaliduj_podpisy", lambda r, z: ([podpis], []))
+    monkeypatch.setattr(
+        verifier.pdfa, "zkontroluj_pdfa",
+        lambda s, r, v: InfoPDFA("PDF/A-3B", True),
+    )
+    monkeypatch.setattr(verifier.lock, "dokument_uzamcen", lambda r: False)
+    return verifier.Verifikator(prazdna_spec, verapdf=[]).zkontroluj(blank_pdf)
+
+
+def test_verdikt_zahranicni_razitko_je_platny(monkeypatch, prazdna_spec, blank_pdf):
+    p = _plny_podpis("/ETSI.CAdES.detached")
+    p.razitko.zeme = "IT"
+    v = _verdikt_pro_podpis(monkeypatch, prazdna_spec, blank_pdf, p)
+    assert v.vysledek == Vysledek.PLATNY  # upozornění nesnižuje verdikt
+    assert [ch.kod for ch in v.chyby] == [KodChyby.RAZITKO_JINE_ZEME]
+
+
+def test_verdikt_zastaraleho_formatu_je_sedy(monkeypatch, prazdna_spec, blank_pdf):
+    p = _plny_podpis("/adbe.pkcs7.detached")
+    v = _verdikt_pro_podpis(monkeypatch, prazdna_spec, blank_pdf, p)
+    assert v.vysledek == Vysledek.ZASTARALY_STANDARD
+
+
 def test_nepodepsane_pdf(blank_pdf, prazdna_spec):
     v = _verifikator(prazdna_spec).zkontroluj(blank_pdf)
     assert v.vysledek == Vysledek.NEPLATNY

@@ -62,7 +62,7 @@ def _fmt_cas(dt) -> str:
 def _chyby_text(v: VysledekSouboru) -> str:
     radky = []
     for ch in v.chyby:
-        radek = ch.kod.value
+        radek = ch.nazev
         if ch.detail:
             radek += f" — {ch.detail}"
         if ch.doporuceni:

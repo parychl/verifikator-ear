@@ -11,6 +11,13 @@ def test_regex_atributova_forma():
     assert _CONF.search(xmp).group(1) == b"B"
 
 
+def test_regex_atributy_s_apostrofy():
+    # některé nástroje zapisují XML atributy s apostrofy místo uvozovek
+    xmp = b"<rdf:Description pdfaid:part='3' pdfaid:conformance='B'/>"
+    assert _PART.search(xmp).group(1) == b"3"
+    assert _CONF.search(xmp).group(1) == b"B"
+
+
 def test_regex_elementova_forma():
     xmp = b"<pdfaid:part>2</pdfaid:part><pdfaid:conformance>u</pdfaid:conformance>"
     assert _PART.search(xmp).group(2) == b"2"

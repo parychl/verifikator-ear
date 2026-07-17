@@ -43,8 +43,13 @@ Nic dalšího není potřeba instalovat — Python ani Java nejsou nutné.
 
 PRVNÍ SPUŠTĚNÍ A INTERNET
 -------------------------
-Při první kontrole si aplikace automaticky stáhne evropský/český
-seznam důvěryhodných autorit (trusted list).
+Při první kontrole si aplikace automaticky stáhne seznamy
+důvěryhodných autorit (trusted listy). Podpisy (EAR) se ověřují proti
+českému seznamu, časová razítka ve výchozím stavu proti seznamům ČR
+a Slovenska (rychlý start). Tlačítkem "EU časová razítka" nahoře lze
+stáhnout seznamy všech zemí EU — pak se uznávají i kvalifikovaná
+razítka od zahraničních evropských autorit (např. bezplatné evropské
+TSA). První stažení celé EU trvá až minutu; volba se pamatuje.
 
 Dále se aplikace ZEPTÁ, zda smí stáhnout validátor formátu PDF/A
 (veraPDF, cca 10 MB; pokud v počítači není Java, přibalí si i její
@@ -95,9 +100,12 @@ POUŽITÍ
 8. Přepínač vpravo nahoře (slunce/měsíc) přepíná tmavý a světlý vzhled;
    tlačítko "?" zobrazí informace o aplikaci a verzi.
 
-Aplikace se při spuštění tiše podívá, zda na GitHubu není novější
-verze — pokud ano, objeví se vpravo dole odkaz ke stažení. Kontrola
-nikam neposílá žádné údaje o vás ani o kontrolovaných souborech.
+Aplikace se při spuštění tiše podívá, zda není k dispozici novější
+verze — pokud ano, objeví se vpravo dole odkaz "stáhnout". Kliknutím
+se nová verze rovnou stáhne do složky Stažené soubory (s průběhem
+ve stavovém řádku) a otevře se Průzkumník s postupem aktualizace —
+na web není potřeba chodit. Kontrola nikam neposílá žádné údaje
+o vás ani o kontrolovaných souborech.
 
 CO TO UMÍ
 -------------------------
@@ -130,6 +138,11 @@ CO TO UMÍ
 - Kontextové menu na souboru: otevřít PDF, otevřít složku,
   zkontrolovat znovu, exportovat vybrané.
 - Upozornění na novou verzi aplikace (z GitHub Releases).
+- Uznávání kvalifikovaných časových razítek z celé EU (po zapnutí
+  tlačítka "EU časová razítka"; výchozí stav zná razítka ČR a
+  Slovenska). Razítko od jiné než české autority dostane informativní
+  upozornění se zemí původu a poznámkou, že ho oficiální verifikátor
+  ISSŘ nemusí uznat — není to ale hodnoceno jako chyba.
 
 ODINSTALACE
 -----------

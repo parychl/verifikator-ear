@@ -28,8 +28,9 @@ class KodChyby(enum.Enum):
     CERT_NENI_KVALIFIKOVANY = "Podpis není založen na kvalifikovaném certifikátu"
     # kapitola 4.2
     DOKUMENT_UZAMCEN = "Dokument je uzamčen"
-    # upozornění nad rámec metodiky (nejde o chybu podpisu)
+    # upozornění nad rámec metodiky (nejde o chyby podpisu)
     ZASTARALY_STANDARD_PODPISU = "Podpis je vytvořen zastaralým standardem (Adobe PKCS#7)"
+    RAZITKO_JINE_ZEME = "Časové razítko od autority z jiné země EU"
 
 
 DOPORUCENI: dict[KodChyby, str] = {
@@ -64,13 +65,43 @@ DOPORUCENI: dict[KodChyby, str] = {
         "Výchozí formát podpisu → „Rovnocenné normě CAdES“) a dokument "
         "podepsat znovu."
     ),
+    KodChyby.RAZITKO_JINE_ZEME: (
+        "První takový dokument doporučujeme pro jistotu ověřit i v oficiálním "
+        "verifikátoru ISSŘ / Portálu stavebníka; případně používat české "
+        "kvalifikované razítko (PostSignum, I.CA)."
+    ),
 }
+
+
+# země EU/EHP dle kódů na trusted listech (pro hlášky u zahraničních razítek)
+ZEME_EU = {
+    "AT": "Rakousko", "BE": "Belgie", "BG": "Bulharsko", "CY": "Kypr",
+    "CZ": "Česko", "DE": "Německo", "DK": "Dánsko", "EE": "Estonsko",
+    "EL": "Řecko", "GR": "Řecko", "ES": "Španělsko", "FI": "Finsko",
+    "FR": "Francie", "HR": "Chorvatsko", "HU": "Maďarsko", "IE": "Irsko",
+    "IS": "Island", "IT": "Itálie", "LI": "Lichtenštejnsko", "LT": "Litva",
+    "LU": "Lucembursko", "LV": "Lotyšsko", "MT": "Malta", "NL": "Nizozemsko",
+    "NO": "Norsko", "PL": "Polsko", "PT": "Portugalsko", "RO": "Rumunsko",
+    "SE": "Švédsko", "SI": "Slovinsko", "SK": "Slovensko",
+    "UK": "Spojené království",
+}
+
+
+def nazev_zeme(kod: str) -> str:
+    """Český název země z kódu; neznámý kód vrací beze změny."""
+    return ZEME_EU.get(kod.upper(), kod)
 
 
 @dataclass
 class Chyba:
     kod: KodChyby
     detail: str = ""
+    doplnek: str = ""   # krátké upřesnění za názvem chyby (např. země autority)
+
+    @property
+    def nazev(self) -> str:
+        """Název chyby k zobrazení, včetně případného upřesnění."""
+        return f"{self.kod.value} ({self.doplnek})" if self.doplnek else self.kod.value
 
     @property
     def doporuceni(self) -> str:
@@ -92,6 +123,7 @@ class InfoRazitka:
     pritomno: bool = False
     cas: datetime | None = None
     tsa: str = ""
+    zeme: str = ""                  # země autority razítka (z certifikátu TSU)
     podpis_platny: bool = False
     kvalifikovane: bool = False
 

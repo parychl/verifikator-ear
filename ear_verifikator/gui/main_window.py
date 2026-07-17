@@ -31,11 +31,14 @@ from PySide6.QtWidgets import (
 
 from ear_verifikator import __version__
 from ear_verifikator.core import cesty, export, verapdf_setup
-from ear_verifikator.core.model import Vysledek, VysledekSouboru
+from ear_verifikator.core.model import KodChyby, Vysledek, VysledekSouboru
 from ear_verifikator.core.signature import sestav_validacni_zdroje
-from ear_verifikator.core.trusted_list import nacti_trusted_list
+from ear_verifikator.core.trusted_list import (
+    VYCHOZI_UZEMI_RAZITEK,
+    nacti_trusted_list,
+)
 from ear_verifikator.core.verifier import Verifikator
-from ear_verifikator.gui import aktualizace, style
+from ear_verifikator.gui import aktualizace, instalace, style
 
 CACHE_DIR = Path.home() / ".ear_verifikator" / "tl_cache"
 IKONA = Path(__file__).resolve().parent.parent / "icon.ico"
@@ -81,10 +84,13 @@ class KontrolniWorker(QObject):
     prubeh = Signal(int, int)
     hotovo = Signal()
 
-    def __init__(self, soubory: list[Path], stahnout_verapdf: bool):
+    def __init__(
+        self, soubory: list[Path], stahnout_verapdf: bool, eu_razitka: bool
+    ):
         super().__init__()
         self.soubory = soubory
         self.stahnout_verapdf = stahnout_verapdf
+        self.eu_razitka = eu_razitka
         self._verifikator: Verifikator | None = None
         self._zastavit = False
 
@@ -94,20 +100,31 @@ class KontrolniWorker(QObject):
 
     _sdileny_verifikator: Verifikator | None = None
     _tl_popis: str = ""
+    _eu_rezim: bool | None = None
 
     @classmethod
     def _priprav_verifikator(
-        cls, progress, stahnout_verapdf: bool
+        cls, progress, stahnout_verapdf: bool, eu_razitka: bool
     ) -> tuple[Verifikator, str]:
-        if cls._sdileny_verifikator is not None:
+        if cls._sdileny_verifikator is not None and cls._eu_rezim == eu_razitka:
             return cls._sdileny_verifikator, cls._tl_popis
-        progress("Načítám trusted list…")
-        vysledek_tl = nacti_trusted_list(CACHE_DIR)
-        if vysledek_tl.registry is not None:
-            zdroje = sestav_validacni_zdroje(vysledek_tl.registry)
-            n_ca = len(list(vysledek_tl.registry.known_certificate_authorities))
-            n_tsa = len(list(vysledek_tl.registry.known_timestamp_authorities))
-            popis = f"Trusted list: {n_ca} kvalif. CA, {n_tsa} TSA"
+        if eu_razitka:
+            progress("Načítám trusted listy celé EU (může trvat i minutu)…")
+        else:
+            progress("Načítám trusted listy (ČR a Slovensko)…")
+        vysledek_tl = nacti_trusted_list(
+            CACHE_DIR,
+            uzemi_razitek=None if eu_razitka else VYCHOZI_UZEMI_RAZITEK,
+        )
+        if vysledek_tl.registry_cz is not None:
+            zdroje = sestav_validacni_zdroje(
+                vysledek_tl.registry_cz, vysledek_tl.registry_eu
+            )
+            n_ca = len(list(vysledek_tl.registry_cz.known_certificate_authorities))
+            registr_tsa = vysledek_tl.registry_eu or vysledek_tl.registry_cz
+            n_tsa = len(list(registr_tsa.known_timestamp_authorities))
+            rozsah = "EU" if eu_razitka else "CZ+SK"
+            popis = f"Trusted list: {n_ca} kvalif. CA (CZ), {n_tsa} TSA ({rozsah})"
             if vysledek_tl.z_prosle_cache:
                 popis += " (⚠ starší kopie z cache)"
         else:
@@ -124,12 +141,13 @@ class KontrolniWorker(QObject):
         )
         cls._sdileny_verifikator = Verifikator(zdroje, verapdf=verapdf)
         cls._tl_popis = popis
+        cls._eu_rezim = eu_razitka
         return cls._sdileny_verifikator, popis
 
     def spust(self):
         try:
             verifikator, popis = self._priprav_verifikator(
-                self.tl_nacten.emit, self.stahnout_verapdf
+                self.tl_nacten.emit, self.stahnout_verapdf, self.eu_razitka
             )
             if verifikator.zdroje is not None:
                 verifikator.zdroje.zacni_davku()  # čerstvá síťová cache
@@ -158,6 +176,26 @@ class AktualizacniWorker(QObject):
                 self.nalezena.emit(verze)
         finally:
             self.hotovo.emit()
+
+
+class StahovaciWorker(QObject):
+    """Stažení ZIPu nové verze na pozadí (do složky Stažené soubory)."""
+
+    prubeh = Signal(int, int)
+    stazeno = Signal(str)
+    selhalo = Signal(str)
+
+    def __init__(self, verze: str):
+        super().__init__()
+        self.verze = verze
+
+    def spust(self):
+        try:
+            cil = aktualizace.stahni_novou_verzi(self.verze, self.prubeh.emit)
+        except Exception as e:
+            self.selhalo.emit(str(e))
+        else:
+            self.stazeno.emit(str(cil))
 
 
 def _fmt_cas(dt) -> str:
@@ -218,7 +256,8 @@ def _detail_html(v: VysledekSouboru, sbalene: set[str] | None = None) -> str:
         radky.append(f"<p>{e(v.poznamka)}</p>")
 
     if v.chyby:
-        upozorneni = v.vysledek == Vysledek.ZASTARALY_STANDARD
+        # u Platného a Zastaralého jsou v seznamu jen upozornění, ne chyby
+        upozorneni = v.vysledek in (Vysledek.ZASTARALY_STANDARD, Vysledek.PLATNY)
         radky.append(
             nadpis(
                 "chyby",
@@ -229,7 +268,7 @@ def _detail_html(v: VysledekSouboru, sbalene: set[str] | None = None) -> str:
         if "chyby" not in sbalene:
             radky.append("<ul>")
             for ch in v.chyby:
-                radky.append(f"<li><b>{e(ch.kod.value)}</b>")
+                radky.append(f"<li><b>{e(ch.nazev)}</b>")
                 if ch.detail:
                     radky.append(f"<br>{e(ch.detail)}")
                 if ch.doporuceni:
@@ -256,9 +295,10 @@ def _detail_html(v: VysledekSouboru, sbalene: set[str] | None = None) -> str:
             znacka = znak(podpis_ok)
         elif p.chyby:
             znacka = znak(False)
-        elif p.varovani:
+        elif any(ch.kod == KodChyby.ZASTARALY_STANDARD_PODPISU for ch in p.varovani):
             znacka = znak_info()
         else:
+            # jiná varování (zahraniční TSA) platnost podpisu nesnižují
             znacka = znak(True)
         radky.append(nadpis(f"p{i}", f"{typ}: pole „{e(p.pole)}“", znacka))
 
@@ -287,17 +327,20 @@ def _detail_html(v: VysledekSouboru, sbalene: set[str] | None = None) -> str:
             if p.chyby:
                 radky.append(
                     "<p><b>Chyby tohoto podpisu:</b> "
-                    + "; ".join(e(ch.kod.value) for ch in p.chyby)
+                    + "; ".join(e(ch.nazev) for ch in p.chyby)
                     + "</p>"
                 )
             if p.varovani:
                 radky.append(
                     "<p><b>Upozornění k tomuto podpisu:</b> "
-                    + "; ".join(e(ch.kod.value) for ch in p.varovani)
+                    + "; ".join(e(ch.nazev) for ch in p.varovani)
                     + "</p>"
                 )
             if not p.je_docasove_razitko and not p.chyby:
-                if p.varovani:
+                if any(
+                    ch.kod == KodChyby.ZASTARALY_STANDARD_PODPISU
+                    for ch in p.varovani
+                ):
                     radky.append(
                         f"<p><b>{znak_info()} Podpis je jinak platný, ale kvůli "
                         "upozornění výše ho verifikátor v ISSŘ nemusí "
@@ -331,6 +374,13 @@ def _detail_html(v: VysledekSouboru, sbalene: set[str] | None = None) -> str:
                 if p.razitko.pritomno:
                     radky.append(radek("Čas", _fmt_cas(p.razitko.cas)))
                     radky.append(radek("Autorita (TSA)", e(p.razitko.tsa)))
+                    if p.razitko.zeme and p.razitko.zeme != "CZ":
+                        from ear_verifikator.core.model import nazev_zeme
+
+                        radky.append(radek(
+                            "Země autority",
+                            e(f"{nazev_zeme(p.razitko.zeme)} ({p.razitko.zeme})"),
+                        ))
                     radky.append(radek("Kvalifikované", "ano" if p.razitko.kvalifikovane else "ne", p.razitko.kvalifikovane))
                 else:
                     radky.append(radek("Časové razítko", "chybí", False))
@@ -409,6 +459,17 @@ class HlavniOkno(QMainWindow):
         for popisek, data in _FILTRY:
             self.cmb_filtr.addItem(popisek, data)
         self.cmb_filtr.currentIndexChanged.connect(self._aplikuj_filtr)
+        self.btn_eu = QPushButton("EU časová razítka")
+        self.btn_eu.setCheckable(True)
+        self.btn_eu.setChecked(
+            bool(instalace._nastaveni_nacti().get("eu_razitka"))
+        )
+        self.btn_eu.setToolTip(
+            "Uznávat kvalifikovaná časová razítka všech zemí EU.\n"
+            "Výchozí stav kontroluje jen razítka z ČR a Slovenska — start je\n"
+            "rychlý. Zapnutí stáhne seznamy celé EU (poprvé až minutu);\n"
+            "volba se pamatuje."
+        )
         self.btn_info = QPushButton("?")
         self.btn_info.setObjectName("rezim")
         self.btn_info.setToolTip("O aplikaci")
@@ -424,6 +485,7 @@ class HlavniOkno(QMainWindow):
         tlacitka.addWidget(self.btn_export)
         tlacitka.addWidget(QLabel("Zobrazit:"))
         tlacitka.addWidget(self.cmb_filtr)
+        tlacitka.addWidget(self.btn_eu)
         tlacitka.addStretch()
         tlacitka.addWidget(self.btn_info)
         tlacitka.addWidget(self.btn_rezim)
@@ -489,6 +551,7 @@ class HlavniOkno(QMainWindow):
         self.btn_slozka.clicked.connect(self._vyber_slozku)
         self.btn_vycistit.clicked.connect(self._vycisti)
         self.btn_zastavit.clicked.connect(self._zastav_kontrolu)
+        self.btn_eu.toggled.connect(self._prepni_eu_razitka)
         self.btn_rezim.clicked.connect(self._prepni_rezim)
         self.btn_info.clicked.connect(self._zobraz_o_aplikaci)
 
@@ -713,8 +776,53 @@ class HlavniOkno(QMainWindow):
             return False
         return True
 
+    def _vrat_tlacitko_eu(self, stav: bool):
+        """Vrátí přepínač do původního stavu bez vyvolání obsluhy."""
+        self.btn_eu.blockSignals(True)
+        self.btn_eu.setChecked(stav)
+        self.btn_eu.blockSignals(False)
+
+    def _prepni_eu_razitka(self, zapnuto: bool):
+        if self._thread is not None:
+            QMessageBox.warning(
+                self, "Probíhá kontrola", "Počkejte na dokončení probíhající kontroly."
+            )
+            self._vrat_tlacitko_eu(not zapnuto)
+            return
+        if zapnuto:
+            volba = QMessageBox.question(
+                self,
+                "Stáhnout EU časová razítka?",
+                "Aplikace stáhne seznamy důvěryhodných autorit všech zemí EU\n"
+                "a začne uznávat kvalifikovaná časová razítka z celé EU\n"
+                "(např. bezplatné zahraniční autority) — ne jen z ČR a Slovenska.\n\n"
+                "Stažení proběhne jednou a trvá přibližně minutu; seznamy se\n"
+                "pak 7 dní drží v mezipaměti. Volba se pamatuje a lze ji\n"
+                "stejným tlačítkem kdykoli vypnout.\n\n"
+                "Stáhnout nyní?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if volba != QMessageBox.Yes:
+                self._vrat_tlacitko_eu(False)  # nic se nestahuje
+                return
+        data = instalace._nastaveni_nacti()
+        data["eu_razitka"] = zapnuto
+        instalace._nastaveni_uloz(data)
+        # vynutit nové sestavení zdrojů důvěry při příští kontrole
+        KontrolniWorker._sdileny_verifikator = None
+        if zapnuto:
+            # stáhnout hned, ať první kontrola nečeká
+            self._zkontroluj([])
+        else:
+            self.statusBar().showMessage(
+                "Příští kontrola použije jen razítka z ČR a Slovenska."
+            )
+
     def _zkontroluj(self, soubory: list[Path], cilove_indexy: list[int] | None = None):
-        """Spustí kontrolu; cilove_indexy = přepsat existující řádky (re-check)."""
+        """Spustí kontrolu; prázdný seznam jen připraví zdroje důvěry
+        (stažení trusted listů); cilove_indexy = přepsat existující řádky
+        (re-check)."""
         if self._thread is not None:
             QMessageBox.warning(self, "Probíhá kontrola", "Počkejte na dokončení probíhající kontroly.")
             return
@@ -750,16 +858,19 @@ class HlavniOkno(QMainWindow):
         self._pocet_davky = len(soubory)
 
         self.progress.setVisible(True)
+        # prázdná dávka = jen stažení zdrojů → neurčitý průběh bez počítadla
         self.progress.setRange(0, len(soubory))
         self.progress.setValue(0)
         self.lbl_prubeh.setText(f"0/{len(soubory)}")
-        self.lbl_prubeh.setVisible(True)
+        self.lbl_prubeh.setVisible(bool(soubory))
         self.btn_zastavit.setEnabled(True)
-        self.btn_zastavit.setVisible(True)
+        self.btn_zastavit.setVisible(bool(soubory))
         self.statusBar().showMessage("Načítám trusted list…")
 
         self._thread = QThread()
-        self._worker = KontrolniWorker(soubory, stahnout_verapdf)
+        self._worker = KontrolniWorker(
+            soubory, stahnout_verapdf, self.btn_eu.isChecked()
+        )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.spust)
         # napojení na metody okna (QObject v GUI vlákně) → Qt doručí
@@ -808,7 +919,7 @@ class HlavniOkno(QMainWindow):
             pdfa_text = v.pdfa.deklarovana + " ?"
         self.tabulka.setItem(radek, 2, QTableWidgetItem(pdfa_text))
         if v.chyby:
-            chyby_text = "; ".join(ch.kod.value for ch in v.chyby[:2])
+            chyby_text = "; ".join(ch.nazev for ch in v.chyby[:2])
             if len(v.chyby) > 2:
                 chyby_text += f" (+{len(v.chyby) - 2})"
         else:
@@ -844,7 +955,7 @@ class HlavniOkno(QMainWindow):
         self.tabulka.setSortingEnabled(True)
         self._aplikuj_filtr()
         stav = "Zastaveno" if zastaveno else "Hotovo"
-        if pocet:
+        if pocet and self._pocet_davky:
             stav += f" ({pocet})"
         souhrn = self._souhrn_text()
         casti = [stav]
@@ -908,12 +1019,70 @@ class HlavniOkno(QMainWindow):
 
     def _na_novou_verzi(self, verze: str):
         self._nova_verze = verze
-        upozorneni = QLabel(
+        self._lbl_aktualizace = QLabel(
             f"K dispozici je nová verze {verze} — "
-            f"<a href='{aktualizace.RELEASES_URL}'>stáhnout</a>"
+            "<a href='stahnout'>stáhnout</a>"
         )
-        upozorneni.setOpenExternalLinks(True)
-        self.statusBar().addPermanentWidget(upozorneni)
+        self._lbl_aktualizace.setOpenExternalLinks(False)
+        self._lbl_aktualizace.linkActivated.connect(self._stahni_novou_verzi)
+        self.statusBar().addPermanentWidget(self._lbl_aktualizace)
+
+    def _stahni_novou_verzi(self, _odkaz: str = ""):
+        if getattr(self, "_stahovani_bezi", False):
+            return
+        self._stahovani_bezi = True
+        self._lbl_aktualizace.setText(f"Stahuji novou verzi {self._nova_verze}…")
+        self._stah_thread = QThread(self)
+        self._stah_worker = StahovaciWorker(self._nova_verze)
+        self._stah_worker.moveToThread(self._stah_thread)
+        self._stah_thread.started.connect(self._stah_worker.spust)
+        self._stah_worker.prubeh.connect(self._na_prubeh_stahovani)
+        self._stah_worker.stazeno.connect(self._na_stazenou_verzi)
+        self._stah_worker.selhalo.connect(self._na_selhane_stahovani)
+        self._stah_worker.stazeno.connect(self._stah_thread.quit)
+        self._stah_worker.selhalo.connect(self._stah_thread.quit)
+        self._stah_thread.start()
+
+    def _na_prubeh_stahovani(self, stazeno: int, celkem: int):
+        if celkem:
+            self._lbl_aktualizace.setText(
+                f"Stahuji novou verzi {self._nova_verze}… "
+                f"{stazeno >> 20}/{celkem >> 20} MB"
+            )
+
+    def _na_stazenou_verzi(self, cesta: str):
+        self._stahovani_bezi = False
+        self._lbl_aktualizace.setText(f"Nová verze {self._nova_verze} stažena ✔")
+        # ukázat stažený soubor v Průzkumníku (jeden celý příkaz — viz
+        # otevírání složky v kontextovém menu)
+        subprocess.Popen(f'explorer /select,"{cesta}"')
+        QMessageBox.information(
+            self,
+            "Nová verze stažena",
+            f"Nová verze {self._nova_verze} je stažená ve složce Stažené "
+            f"soubory:\n{cesta}\n\n"
+            "Postup aktualizace:\n"
+            "1. Zavřete tuto aplikaci.\n"
+            "2. Rozbalte stažený ZIP a nahraďte jím stávající složku aplikace\n"
+            "   (nebo rozbalte do nové složky a starou smažte).\n"
+            "3. Spusťte Verifikator EAR.exe z nové složky.\n\n"
+            "Nastavení a stažené seznamy zůstávají zachované — jsou uložené\n"
+            "mimo složku aplikace.",
+        )
+
+    def _na_selhane_stahovani(self, chyba: str):
+        self._stahovani_bezi = False
+        self._lbl_aktualizace.setText(
+            f"K dispozici je nová verze {self._nova_verze} — "
+            "<a href='stahnout'>stáhnout</a>"
+        )
+        QMessageBox.warning(
+            self,
+            "Stažení se nepodařilo",
+            f"Novou verzi se nepodařilo stáhnout ({chyba}).\n"
+            "Otevřu stránku vydání v prohlížeči, kde ji lze stáhnout ručně.",
+        )
+        QDesktopServices.openUrl(QUrl(aktualizace.RELEASES_URL))
 
     def _zobraz_o_aplikaci(self):
         nova = ""

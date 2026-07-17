@@ -16,7 +16,14 @@ from pyhanko.pdf_utils.misc import PdfReadError
 from pyhanko.pdf_utils.reader import PdfFileReader
 
 from . import cesty, lock, pdfa
-from .model import Chyba, InfoPodpisu, KodChyby, Vysledek, VysledekSouboru
+from .model import (
+    Chyba,
+    InfoPodpisu,
+    KodChyby,
+    Vysledek,
+    VysledekSouboru,
+    nazev_zeme,
+)
 from .signature import (
     LEGACY_SUBFILTERS,
     PADES_SUBFILTERS,
@@ -98,11 +105,30 @@ def _chyby_podpisu(
     if not p.razitko.pritomno and not doc_ts_ok:
         chyby.append(Chyba(KodChyby.CHYBI_CASOVE_RAZITKO))
     elif p.razitko.pritomno and not p.razitko.kvalifikovane:
+        napoveda = ""
+        if p.razitko.zeme not in ("", "CZ", "SK"):
+            napoveda = (
+                f" Autorita razítka je ze země {nazev_zeme(p.razitko.zeme)} "
+                f"({p.razitko.zeme}) — zapněte tlačítko „EU časová razítka“ "
+                "a soubor zkontrolujte znovu."
+            )
         chyby.append(
             Chyba(
                 KodChyby.CASOVE_RAZITKO_NEPLATNE,
                 "Časové razítko není platné kvalifikované razítko od TSA "
-                "uvedené na trusted listu.",
+                "uvedené na trusted listu." + napoveda,
+            )
+        )
+    elif p.razitko.kvalifikovane and p.razitko.zeme not in ("", "CZ"):
+        zeme = nazev_zeme(p.razitko.zeme)
+        varovani.append(
+            Chyba(
+                KodChyby.RAZITKO_JINE_ZEME,
+                f"Razítko vydala autorita ze země {zeme} ({p.razitko.zeme}) — "
+                f"{p.razitko.tsa}. Je kvalifikovaná podle evropského "
+                "trusted listu (eIDAS), ale je možné, že ji oficiální "
+                "verifikátor ISSŘ neuzná. Není to chyba podpisu.",
+                doplnek=zeme,
             )
         )
     return chyby, varovani
@@ -181,14 +207,20 @@ class Verifikator:
         elif v.uzamcen:
             v.vysledek = Vysledek.TECHNICKY_NEVYHOVUJICI
             v.chyby.append(Chyba(KodChyby.DOKUMENT_UZAMCEN))
-        elif all(p.varovani for p in ciste):
-            # podpisy jsou platné, ale žádný nevznikl standardem PAdES
-            v.vysledek = Vysledek.ZASTARALY_STANDARD
+        else:
+            # o šedém stavu rozhoduje jen zastaralý formát podpisu; ostatní
+            # varování (např. zahraniční TSA) nechávají verdikt Platný a jen
+            # se zobrazí jako upozornění
+            zastaraly = all(
+                any(ch.kod == KodChyby.ZASTARALY_STANDARD_PODPISU for ch in p.varovani)
+                for p in ciste
+            )
+            v.vysledek = (
+                Vysledek.ZASTARALY_STANDARD if zastaraly else Vysledek.PLATNY
+            )
             videne = set()
             for p in ciste:
                 for ch in p.varovani:
                     if ch.kod not in videne:
                         videne.add(ch.kod)
                         v.chyby.append(ch)
-        else:
-            v.vysledek = Vysledek.PLATNY

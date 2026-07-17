@@ -41,7 +41,11 @@ def _samotest() -> int:
     vystup_arg = _hodnota_prepinace(sys.argv, "--vystup")
     vystup = cesty.fs_cesta(vystup_arg) if vystup_arg else None
     tl = nacti_trusted_list(Path.home() / ".ear_verifikator" / "tl_cache")
-    zdroje = sestav_validacni_zdroje(tl.registry) if tl.registry else None
+    zdroje = (
+        sestav_validacni_zdroje(tl.registry_cz, tl.registry_eu)
+        if tl.registry_cz
+        else None
+    )
     vysledek = Verifikator(zdroje).zkontroluj(pdf)
     if vystup:
         export.export_txt(vystup, [vysledek])

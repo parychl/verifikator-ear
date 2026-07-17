@@ -75,9 +75,16 @@ neutralizují, aby je Excel nevyhodnotil jako vzorce.
 ## Důvěra a offline režim
 
 Při prvním spuštění se stáhne evropský seznam důvěryhodných seznamů (LOTL),
-ověří se jeho podpis a z něj český Trusted List (kvalifikované CA a TSA).
-Vše se ukládá do cache (`~/.ear_verifikator/tl_cache`, platnost 7 dní).
-Bez připojení se použije i prošlá cache — s upozorněním ve stavovém řádku.
+ověří se jeho podpis a z něj národní trusted listy. Důvěra je rozdělená:
+**certifikáty podpisů (EAR) se ověřují proti českému seznamu**, zatímco
+**časová razítka výchozí proti seznamům ČR a Slovenska** (rychlý start).
+Tlačítko **„EU časová razítka“** v horní liště stáhne seznamy všech zemí EU —
+kvalifikovaná TSA může být z kteréhokoli členského státu (např. bezplatné
+evropské autority); první stažení trvá až minutu a volba se pamatuje.
+Razítko od jiné než české autority dostane informativní upozornění se zemí
+původu (verdikt to nemění). Vše se ukládá do cache
+(`~/.ear_verifikator/tl_cache`, platnost 7 dní). Bez připojení se použije
+i prošlá cache — s upozorněním ve stavovém řádku.
 
 ## Omezení
 

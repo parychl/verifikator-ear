@@ -1,0 +1,47 @@
+# Verifikátor EAR v1.2.0 — kvalifikovaná časová razítka z celé EU (podpisy dál jen CZ)
+
+## Kontext
+
+Uživatel programu nahlásil: bezplatná časová razítka dle článku https://www.bajecnysvet.cz/navody/navod001.php (Sectigo ES, Ministero della Difesa IT, Cartão de Cidadão PT, Docusign FR, RIA EE, SEP/EvroTrust BG, APED GR, belgium.be, BaltStamp LT, ACCV/Izenpe ES) jsou kvalifikovaná dle eIDAS, ale program hlásí „Časové razítko je neplatné“.
+
+**Příčina:** `core/trusted_list.py` načítá z evropského LOTL jen český trusted list (`VYCHOZI_UZEMI = {"CZ"}`); kvalifikovanost TSA se posuzuje jen proti českým autoritám. Metodika MMR vyžaduje „kvalifikované razítko“ bez omezení na ČR, ISSŘ (EU DSS) načítá plný LOTL a tato razítka uznává → falešná chyba.
+
+**Rozhodnutí uživatele:** rozdělit zdroje důvěry — **certifikát podpisu (EAR) se dál ověřuje jen proti CZ** (nulová změna chování), **certifikáty časových razítek proti celé EU**. pyHanko to podporuje: `validate_pdf_signature` přijímá oddělené kontexty pro podpis a razítko (už dnes předáváme dva).
+
+## Kroky
+
+### 1. `core/trusted_list.py` — dvojí registr z jednoho stažení
+- LOTL stáhnout/prefetchnout jednou (prefetch `Accept: */*` pro **všechna** odkazovaná území, ne jen CZ), pak `lotl_to_registry` zavolat dvakrát nad toutéž cache: `only_territories={"CZ"}` → `registry_cz`, `only_territories=None` → `registry_eu` (parsování CZ navíc je zanedbatelné).
+- `VysledekTL` rozšířit: `registry_cz`, `registry_eu` (místo jediného `registry`), `z_prosle_cache`, `chyby`. Stejná dvojice i ve fallbacku na prošlou cache.
+- Chyby jednotlivých národních TL jen logovat (už dnes) — jeden vadný seznam nesmí shodit ostatní.
+
+### 2. `core/signature.py` — oddělené kontexty a posuzovatelé
+- `ValidacniZdroje`: přidat `trust_manager_razitek` + `assessor_razitek` (nad `registry_eu`); `sestav_validacni_zdroje(registry_cz, registry_razitek=None)` — když druhý chybí, použije se první (zpětná kompatibilita testů s prázdným registrem).
+- Nový `kontext_razitek()` (EU, stejné parametry jako `novy_kontext`, sdílené fetchery); `novy_kontext()` a `kontext_k_okamziku()` zůstávají nad CZ (podpis, LTV fallback).
+- `_je_kvalifikovany` a `_vypln_stav` parametrizovat posuzovatelem: podpis → CZ assessor, `_info_razitka` a `zvaliduj_docasove_razitko` (celé, včetně `_vypln_stav`) → EU assessor.
+- `zvaliduj_podpis`: `signer_validation_context=CZ`, `ts_validation_context=EU`.
+
+### 3. Upozornění na zahraniční TSA (není chyba, verdikt zůstává Platný)
+- `core/model.py`: `InfoRazitka.zeme: str = ""` (země autority razítka) + nový `KodChyby.RAZITKO_JINE_ZEME = "Časové razítko od autority z jiné země EU"` s doporučením („Razítko je kvalifikované dle evropského seznamu; oficiální verifikátor ISSŘ by ho měl uznat, přesto doporučujeme první takový soubor ověřit i v ISSŘ.“).
+- `core/signature.py` `_info_razitka`: zemi číst ze subjektu certifikátu TSA (`country_name`); pokud razítko kvalifikované dle EU, ale **ne** dle CZ registru (druhé posouzení CZ assessorem), označit jako zahraniční.
+- `core/verifier.py`: zahraniční TSA přidat do `p.varovani` s detailem „autorita ze země XY…“. **Změnit pravidlo verdiktu**: šedý stav „Zastaralý standard podpisu“ nastává jen když varování obsahuje `ZASTARALY_STANDARD_PODPISU`; ostatní varování (zahraniční TSA) nechávají verdikt **Platný** a jen se propíšou do `v.chyby` k zobrazení.
+- `gui/main_window.py`: v sekci Časové razítko řádek „Země autority: XY“ (u české TSA se nezobrazuje); nadpis sekce chyb „Upozornění“ i pro Platný soubor, který má jen varování; agregační značka podpisu ℹ jen u zastaralého formátu, u zahraniční TSA zůstává ✔ (podpis je v pořádku).
+- Test: syntetický `InfoPodpisu` s varováním RAZITKO_JINE_ZEME a bez chyb → verdikt PLATNY (ne ZASTARALY_STANDARD); s varováním zastaralého formátu → ZASTARALY_STANDARD (stávající chování).
+
+### 4. Navazující úpravy (GUI/CLI/verze/dokumentace)
+- `gui/main_window.py` `_priprav_verifikator`: předat obě registry; popis stavu např. „Trusted list: X kvalif. CA (CZ), Y TSA (EU)“. Hlášku při načítání doplnit o „(seznamy všech zemí EU — poprvé může trvat déle)“.
+- `gui/app.py` `_samotest`: nové volání `sestav_validacni_zdroje`.
+- `tests/conftest.py` `prazdna_spec`: beze změny logiky (default druhého registru).
+- `__version__ = "1.2.0"`; README a Navod.txt: „český Trusted List“ → podpisy CZ / razítka celá EU + poznámka o delším prvním načtení.
+
+### 5. Ověření a vydání
+- `pytest ear_verifikator/tests` — vše zelené (stávající testy s prázdným registrem beze změn).
+- Smazat `~/.ear_verifikator/tl_cache`, načíst naostro: `registry_eu.known_timestamp_authorities` obsahuje TSA z článku (namátkou EvroTrust/Sectigo); změřit dobu prvního načtení i načtení z cache (do release notes).
+- Regrese: `--overit` na českém podepsaném PDF (PostSignum) — výsledek beze změny.
+- Build, ZIP, commit+push, `gh release create v1.2.0` (poznámky: uznávání kvalifikovaných razítek z celé EU, podpisy dál striktně CZ; reakce na dotaz z praxe).
+
+### 6. Odpověď tazateli (text, dodám v závěrečné zprávě)
+Razítka z článku jsou skutečně kvalifikovaná, ale figurují na trusted listech svých zemí; program dosud porovnával jen s českým seznamem — proto „neplatné“, zatímco ISSŘ je uznává. Od v1.2.0 program posuzuje razítka proti seznamům celé EU (autorizační razítko/podpis se dál kontroluje proti ČR) — stačí aktualizovat.
+
+## Ověření (souhrn)
+1. Testy zelené. 2. EU TSA z článku v registru razítek. 3. České soubory beze změny výsledku. 4. Změřený čas načtení v release notes.
