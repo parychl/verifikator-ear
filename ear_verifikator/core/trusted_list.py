@@ -104,8 +104,15 @@ _REGISTR_VERZE = 1
 
 def _verze_knihoven() -> str:
     """Verze knihoven, jejichž třídy jsou v pickle — po upgradu se registr
-    zahodí a sestaví znovu (unpickle napříč verzemi není spolehlivý)."""
-    casti = []
+    zahodí a sestaví znovu (unpickle napříč verzemi není spolehlivý).
+
+    V PyInstaller exe metadata knihoven chybí (PackageNotFoundError) —
+    verze aplikace je tam zástupný rozlišovač, každé vydání nese pevné
+    verze knihoven. Zároveň odděluje cache exe od vývojového prostředí.
+    """
+    from ear_verifikator import __version__
+
+    casti = [f"app=={__version__}"]
     for balik in ("pyhanko", "pyhanko-certvalidator", "asn1crypto"):
         try:
             casti.append(f"{balik}=={version(balik)}")
